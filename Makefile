@@ -92,6 +92,9 @@ endif
 
 ifdef UPDATE_CMD
 DEFINES	    += -D UPDATE_BUTTON_CMD='"$(UPDATE_CMD)"'
+# The update command reports its progress here, see src/update_progress.h
+UPDATE_STATUS_FILE ?= /run/cosmos-update.status
+DEFINES	    += -D UPDATE_BUTTON_STATUS_FILE='"$(UPDATE_STATUS_FILE)"'
 endif
 
 ifdef UPDATE_TEXT

@@ -3,6 +3,9 @@
 #include "logger.h"
 #include "subprocess.hpp"
 #include "simple_dialog.h"
+#ifdef UPDATE_BUTTON_CMD
+#include "update_progress.h"
+#endif
 
 #include <experimental/filesystem>
 
@@ -176,10 +179,7 @@ void SettingPanel::handle_callback(lv_event_t *event) {
     } else if (btn == update_btn.get_container()) {
       Config *conf = Config::get_instance();
       auto update_cmd = conf->get<std::string>(std::string("/commands/") + UPDATE_BUTTON_CMD);
-      lv_obj_t *mbox = create_simple_dialog(lv_scr_act(), UPDATE_BUTTON_TITLE " Initiated", UPDATE_BUTTON_SUCCESS, false, false);
-      run_command_deferred(mbox, update_cmd,
-                           UPDATE_BUTTON_TITLE " Failed", UPDATE_BUTTON_FAILURE,
-                           DEFERRED_COMMAND_DELAY_MS);
+      start_update_with_progress(update_cmd);
 #else
     } else if (btn == shutdown_host_btn.get_container()) {
       Config *conf = Config::get_instance();
