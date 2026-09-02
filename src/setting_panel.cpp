@@ -16,10 +16,17 @@ LV_IMG_DECLARE(emergency);
 LV_IMG_DECLARE(print);
 LV_IMG_DECLARE(sd_img);
 
-struct reset_ctx {
+struct deferred_cmd_ctx {
     lv_obj_t * mbox;
     std::string cmd;
+    const char * failure_title;
+    const char * failure_message;
 };
+
+// Long enough for LVGL to render the dialog before the command blocks the UI thread.
+static constexpr uint32_t DEFERRED_COMMAND_DELAY_MS = 500;
+// The factory reset dialog is deliberately left up longer before we block.
+static constexpr uint32_t FACTORY_RESET_DELAY_MS = 5000;
 
 static int call_command(const std::string &cmd) {
     try {
@@ -30,22 +37,38 @@ static int call_command(const std::string &cmd) {
     }
 }
 
-static void run_factory_reset_cb(lv_timer_t * t) {
-    reset_ctx * ctx = (reset_ctx *)t->user_data;
+static void run_deferred_command_cb(lv_timer_t * t) {
+    deferred_cmd_ctx * ctx = (deferred_cmd_ctx *)t->user_data;
 
     int ret = call_command(ctx->cmd);
 
     if (ret != 0) {
         simple_dialog_close(ctx->mbox);
         create_simple_dialog(lv_scr_act(),
-                             FACTORY_RESET_BUTTON_TITLE " Failed",
-                             FACTORY_RESET_BUTTON_FAILURE,
+                             ctx->failure_title,
+                             ctx->failure_message,
                              true,
                              true);
     }
 
     delete ctx;
     lv_timer_del(t);
+}
+
+// Commands such as update, switch to stock and factory reset block for a long
+// time and then reboot the printer. Calling them straight from the click
+// handler freezes the UI thread before LVGL gets a chance to draw, so the press
+// appears to do nothing at all until the machine reboots. Put the dialog up
+// first and defer the command to a one shot timer so the screen is rendered
+// before we block on it.
+static void run_command_deferred(lv_obj_t * mbox,
+                                 const std::string &cmd,
+                                 const char * failure_title,
+                                 const char * failure_message,
+                                 uint32_t delay_ms) {
+    deferred_cmd_ctx * ctx = new deferred_cmd_ctx{ mbox, cmd, failure_title, failure_message };
+    lv_timer_t * timer = lv_timer_create(run_deferred_command_cb, delay_ms, ctx);
+    lv_timer_set_repeat_count(timer, 1);
 }
 
 SettingPanel::SettingPanel(KWebSocketClient &c, std::mutex &l, lv_obj_t *parent)
@@ -153,22 +176,18 @@ void SettingPanel::handle_callback(lv_event_t *event) {
     } else if (btn == update_btn.get_container()) {
       Config *conf = Config::get_instance();
       auto update_cmd = conf->get<std::string>(std::string("/commands/") + UPDATE_BUTTON_CMD);
-      auto ret = call_command(update_cmd);
-      if (ret == 0) {
-        create_simple_dialog(lv_scr_act(), UPDATE_BUTTON_TITLE " Initiated", UPDATE_BUTTON_SUCCESS, false, false);
-      } else {
-        create_simple_dialog(lv_scr_act(), UPDATE_BUTTON_TITLE " Failed", UPDATE_BUTTON_FAILURE, true, true);
-      }
+      lv_obj_t *mbox = create_simple_dialog(lv_scr_act(), UPDATE_BUTTON_TITLE " Initiated", UPDATE_BUTTON_SUCCESS, false, false);
+      run_command_deferred(mbox, update_cmd,
+                           UPDATE_BUTTON_TITLE " Failed", UPDATE_BUTTON_FAILURE,
+                           DEFERRED_COMMAND_DELAY_MS);
 #else
     } else if (btn == shutdown_host_btn.get_container()) {
       Config *conf = Config::get_instance();
       auto shutdown_host_cmd = conf->get<std::string>("/commands/shutdown_host_cmd");
-      auto ret = call_command(shutdown_host_cmd);
-      if (ret == 0) {
-        create_simple_dialog(lv_scr_act(), "Shutdown Host Initiated", "Shutdown of host has been initiated", false, false);
-      } else {
-        create_simple_dialog(lv_scr_act(), "Shutdown Host Failed", "Failed to shutdown host!", true, true);
-      }
+      lv_obj_t *mbox = create_simple_dialog(lv_scr_act(), "Shutdown Host Initiated", "Shutdown of host has been initiated", false, false);
+      run_command_deferred(mbox, shutdown_host_cmd,
+                           "Shutdown Host Failed", "Failed to shutdown host!",
+                           DEFERRED_COMMAND_DELAY_MS);
 #endif
     } else if (btn == support_zip_btn.get_container()) {
       Config *conf = Config::get_instance();
@@ -184,20 +203,18 @@ void SettingPanel::handle_callback(lv_event_t *event) {
     } else if (btn == switch_to_stock_btn.get_container()) {
       Config *conf = Config::get_instance();
       auto switch_to_stock_cmd = conf->get<std::string>("/commands/switch_to_stock_cmd");
-      auto ret = call_command(switch_to_stock_cmd);
-      if (ret == 0) {
-        create_simple_dialog(lv_scr_act(), SWITCH_TO_STOCK_BUTTON_TITLE " Initiated", SWITCH_TO_STOCK_BUTTON_SUCCESS, false, false);
-      } else {
-        create_simple_dialog(lv_scr_act(), SWITCH_TO_STOCK_BUTTON_TITLE " Failed", SWITCH_TO_STOCK_BUTTON_FAILURE, true, true);
-      }
+      lv_obj_t *mbox = create_simple_dialog(lv_scr_act(), SWITCH_TO_STOCK_BUTTON_TITLE " Initiated", SWITCH_TO_STOCK_BUTTON_SUCCESS, false, false);
+      run_command_deferred(mbox, switch_to_stock_cmd,
+                           SWITCH_TO_STOCK_BUTTON_TITLE " Failed", SWITCH_TO_STOCK_BUTTON_FAILURE,
+                           DEFERRED_COMMAND_DELAY_MS);
     } else if (btn == factory_reset_btn.get_container()) {
       lv_obj_t *mbox  = create_simple_dialog(lv_scr_act(), FACTORY_RESET_BUTTON_TITLE " Initiated", FACTORY_RESET_BUTTON_SUCCESS, false, false);
 
       Config *conf = Config::get_instance();
       auto cmd = conf->get<std::string>("/commands/factory_reset_cmd");
-      reset_ctx * ctx = new reset_ctx{ mbox, cmd };
-      lv_timer_t * timer = lv_timer_create(run_factory_reset_cb, 5000, ctx);
-      lv_timer_set_repeat_count(timer, 1);
+      run_command_deferred(mbox, cmd,
+                           FACTORY_RESET_BUTTON_TITLE " Failed", FACTORY_RESET_BUTTON_FAILURE,
+                           FACTORY_RESET_DELAY_MS);
     }
   }
 }
