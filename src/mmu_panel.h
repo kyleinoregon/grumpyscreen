@@ -2,14 +2,21 @@
 #define __MMU_PANEL_H__
 
 #include "mmu_backend.h"
+#include "button_container.h"
 #include "websocket_client.h"
 #include "notify_consumer.h"
 #include "lvgl/lvgl.h"
 
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
+
+// "RRGGBB", "#rrggbb" (any case) -> colour. false (and a placeholder grey in
+// *out) when the string is not a colour. Shared with the spoolman table,
+// which paints the same vendor hex strings.
+bool parse_colour(const std::string &colour, lv_color_t *out);
 
 // Vendor-agnostic MMU panel: renders the slots of whichever MmuBackend is
 // active and drives it through the MmuBackend verbs only.
@@ -83,7 +90,6 @@ class MmuPanel : public NotifyConsumer {
 
   // dim sheet + centred box, shared by the three popouts; returns the box
   lv_obj_t *create_popout(lv_obj_t **overlay);
-  const char *slot_status(const MmuSlot &slot);
   lv_color_t slot_colour(const MmuSlot &slot, bool *valid);
   bool is_backup_slot(int idx) const;
 
@@ -113,10 +119,12 @@ class MmuPanel : public NotifyConsumer {
   lv_obj_t *edit_name_lbl;
   lv_obj_t *edit_tool_lbl;
   lv_obj_t *edit_mat_lbl;
-  lv_obj_t *edit_status_lbl;
   lv_obj_t *edit_load_btn;   // toggles between Load and Unload with slot state
   lv_obj_t *edit_eject_btn;
-  lv_obj_t *edit_backup_btn; // infinite spool: backup assignment for the slot
+  // Backup, Save and Back are icon tiles like the ones on the extruder panel,
+  // so they answer a tap the same way -- the icon takes the accent. They are
+  // built with the edit screen rather than in the constructor, hence pointers.
+  std::unique_ptr<ButtonContainer> edit_backup_btn;  // infinite spool assignment
   lv_obj_t *edit_swatches_row1;
   lv_obj_t *edit_swatches_row2;
   std::vector<lv_obj_t*> colour_swatch_btns;
@@ -124,8 +132,8 @@ class MmuPanel : public NotifyConsumer {
   std::vector<std::string> materials;        // inline row, first few from config
   std::vector<std::string> material_catalog; // popout: config values then built-ins
   std::vector<lv_obj_t*> material_btns;
-  lv_obj_t *edit_save_btn;
-  lv_obj_t *edit_back_btn;
+  std::unique_ptr<ButtonContainer> edit_save_btn;
+  std::unique_ptr<ButtonContainer> edit_back_btn;
 
   // Backup picker popout: choose which slot this one backs up
   lv_obj_t *backup_picker;
